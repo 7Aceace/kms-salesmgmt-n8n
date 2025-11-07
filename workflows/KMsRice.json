@@ -1,0 +1,391 @@
+{
+  "name": "KMsRice",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "id": "dd85dbe0-1f48-4be1-b726-a63a575a330c",
+      "name": "Telegram Trigger",
+      "webhookId": "91a6f429-da0c-4ac7-a29b-891dd21e3cf8",
+      "credentials": {
+        "telegramApi": {
+          "id": "jD1Dc62QHHmmszrj",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.message.text }}",
+        "messages": {
+          "messageValues": [
+            {
+              "message": "You are a sack sales data extraction assistant. Extract structured sales data from ANY natural language message format.  The user message might be formal or casual. Extract quantities for these sack sizes: - 5kg sacks (also called: small, 5kg, five kg) - 10kg sacks (also called: medium, 10kg, ten kg)   - 25kg sacks (also called: large, 25kg, twenty-five kg) - 50kg sacks (also called: extra large, XL, 50kg, fifty kg)  Return ONLY a valid JSON object with NO additional text before or after: {   \"date\": null,   \"sack_5kg\": 0,   \"sack_10kg\": 0,   \"sack_25kg\": 0,   \"sack_50kg\": 0,   \"notes\": \"\" }  Examples of valid inputs: - \"Hi! Today: 7 units of 5kg, 7 of 10kg, 7 of 25kg\" - \"5kg=5, 10kg=10, 25kg=5, 50kg=3\" - \"Sold 23 sacks: 10 small, 8 medium, 5 large\" - \"November 5: 10 of 5kg, 20 of 10kg\" (extract the date if mentioned)  Rules: 1. If date is NOT mentioned, set date to null (not a made-up date) 2. If date IS mentioned, convert to YYYY-MM-DD format 3. If a sack size is not mentioned, set to 0 4. Extract numbers from natural language (seven → 7, ten → 10) 5. Return ONLY the JSON object, no explanations or extra text"
+            }
+          ]
+        },
+        "batching": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.7,
+      "position": [
+        416,
+        0
+      ],
+      "id": "a6ef73f5-1e33-4e3d-a956-c74822f2b61c",
+      "name": "Basic LLM Chain"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "gpt-4o-mini",
+          "mode": "list",
+          "cachedResultName": "gpt-4o-mini"
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        544,
+        128
+      ],
+      "id": "78f7c60c-93bd-44a8-aa7a-82d855496fe5",
+      "name": "OpenAI Chat Model",
+      "notesInFlow": false,
+      "credentials": {
+        "openAiApi": {
+          "id": "qDPQSI4QNv29ydNI",
+          "name": "OpenAi account"
+        }
+      },
+      "notes": "Purpose: Parse natural language sales input\n\nPrompt Template:\n\"You are a sales data extraction assistant. Extract structured data from the following message:\n\nMessage: {{$json.message.text}}\n\nExtract and return ONLY a JSON object with these fields:\n{\n  \"date\": \"YYYY-MM-DD\",\n  \"amount\": number,\n  \"quantity\": number,\n  \"product_category\": \"string\",\n  \"notes\": \"string\"\n}\n\nIf the user doesn't specify a date, use today's date. If information is missing, use null.\nRespond ONLY with valid JSON, no additional text.\"\n\nConfiguration:\n- Temperature: 0.1 (for consistency)\n- Max Tokens: 500"
+    },
+    {
+      "parameters": {
+        "jsCode": "const message = $input.first().json.message?.text || $input.first().json.chatInput;\n\n// Get AI response - Basic LLM Chain outputs to \"text\" field\nconst aiResponse = $input.first().json.text || \n                   $input.first().json.output || \n                   $input.first().json.choices?.[0]?.message?.content;\n\n// Parse AI response\nlet salesData;\ntry {\n  // Try to extract JSON from AI response\n  const jsonMatch = aiResponse.match(/\\{[\\s\\S]*\\}/);\n  if (!jsonMatch) {\n    throw new Error(\"No JSON found\");\n  }\n  salesData = JSON.parse(jsonMatch[0]);\n} catch (error) {\n  return [{\n    json: {\n      error: true,\n      message: \"Invalid format. Please try again.\\n\\nExample: '5kg=5, 10kg=10, 25kg=5, 50kg=3'\",\n      telegram_chat_id: $('Telegram Trigger').item.json.message.chat.id\n    }\n  }];\n}\n// Always use today's date unless a valid recent date is provided\nconst today = new Date();\nconst todayString = today.toISOString().split('T')[0];\n\nif (!salesData.date || salesData.date === null || salesData.date === \"null\") {\n  // No date provided - use today\n  salesData.date = todayString;\n} else {\n  // Check if the date is reasonable (within last 30 days or future 7 days)\n  const providedDate = new Date(salesData.date);\n  const daysDiff = (providedDate - today) / (1000 * 60 * 60 * 24);\n  \n  if (daysDiff < -30 || daysDiff > 7) {\n    // Date is too old or too far in future - use today instead\n    salesData.date = todayString;\n  }\n}\n\n// Define prices (adjust to your actual prices)\nconst PRICES = {\n  sack_5kg: 50,\n  sack_10kg: 100,\n  sack_25kg: 250,\n  sack_50kg: 500\n};\n\n// Ensure all values are numbers\nsalesData.sack_5kg = Number(salesData.sack_5kg) || 0;\nsalesData.sack_10kg = Number(salesData.sack_10kg) || 0;\nsalesData.sack_25kg = Number(salesData.sack_25kg) || 0;\nsalesData.sack_50kg = Number(salesData.sack_50kg) || 0;\n\n// Calculate totals\nconst totalUnits = salesData.sack_5kg + \n                   salesData.sack_10kg + \n                   salesData.sack_25kg + \n                   salesData.sack_50kg;\n\nconst revenue = (salesData.sack_5kg * PRICES.sack_5kg) +\n                (salesData.sack_10kg * PRICES.sack_10kg) +\n                (salesData.sack_25kg * PRICES.sack_25kg) +\n                (salesData.sack_50kg * PRICES.sack_50kg);\n\n// Validate\nif (totalUnits === 0) {\n  return [{\n    json: {\n      error: true,\n      message: \"No sales data found. Please specify quantities.\\n\\nExample: 'Today sold 5 of 5kg, 10 of 10kg'\",\n      telegram_chat_id: $('Telegram Trigger').item.json.message.chat.id\n    }\n  }];\n}\n\n// Set default date if not provided\nif (!salesData.date) {\n  const today = new Date();\n  salesData.date = today.toISOString().split('T')[0];\n}\n\n// Enrich data\nsalesData.total_units = totalUnits;\nsalesData.revenue = revenue;\nsalesData.salesperson = $('Telegram Trigger').item.json.message.from.username || \n                        $('Telegram Trigger').item.json.message.from.first_name || \n                        'Unknown';\nsalesData.telegram_user_id = $('Telegram Trigger').item.json.message.from.id;\nsalesData.telegram_chat_id = $('Telegram Trigger').item.json.message.chat.id;\nsalesData.timestamp = new Date().toISOString();\nsalesData.raw_message = message;\nsalesData.error = false; // IMPORTANT: Set error to false on success\n\nreturn [{ json: salesData }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        736,
+        0
+      ],
+      "id": "f1195d34-bfaa-4f5b-80d5-7964f3ffb302",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1QvcxnrLSf6jlRLOgOG7oT-CGSm_ARK1ljTgbITv3Ums",
+          "mode": "list",
+          "cachedResultName": "KM's Sales Management",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1QvcxnrLSf6jlRLOgOG7oT-CGSm_ARK1ljTgbITv3Ums/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Daily_Sales",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1QvcxnrLSf6jlRLOgOG7oT-CGSm_ARK1ljTgbITv3Ums/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Date": "={{ $json.date }}\n",
+            "5kg Sacks": "={{ $json.sack_5kg }}\n",
+            "10kg Sacks": "={{ $json.sack_10kg }}",
+            "25kg Sacks": "={{ $json.sack_25kg }}",
+            "50kg Sacks": "={{ $json.sack_50kg }}",
+            "Revenue": "={{ $json.revenue }}",
+            "Notes": "={{ $json.notes }}",
+            "Timestamp": "= {{ $json.timestamp }}",
+            "Total Units": "={{ $json.total_units }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Date",
+              "displayName": "Date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "5kg Sacks",
+              "displayName": "5kg Sacks",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "10kg Sacks",
+              "displayName": "10kg Sacks",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "25kg Sacks",
+              "displayName": "25kg Sacks",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "50kg Sacks",
+              "displayName": "50kg Sacks",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Total Units",
+              "displayName": "Total Units",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Revenue",
+              "displayName": "Revenue",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Notes",
+              "displayName": "Notes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Timestamp",
+              "displayName": "Timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        944,
+        0
+      ],
+      "id": "a8d2612b-af58-45d9-a032-94f7c9225225",
+      "name": "Append row in sheet",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "ELW5ZMPWKwuh36kN",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "0ece93b2-ab85-4715-9706-8e7bc62801f1",
+              "leftValue": "= {{$json.error}}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "false",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1152,
+        0
+      ],
+      "id": "7b1f0281-c39c-4336-b289-b1715809eeff",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').item.json.message.chat.id }}",
+        "text": "=\"✅ Sales logged successfully!  📊 Summary: • Date: {{$json.date}} • Amount: ${{$json.amount}} • Product: {{$json.product_category}} • Quantity: {{$json.quantity}}  View your dashboard:https://docs.google.com/spreadsheets/d/1QvcxnrLSf6jlRLOgOG7oT-CGSm_ARK1ljTgbITv3Ums/edit?usp=sharing\"",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1360,
+        208
+      ],
+      "id": "6fea6967-277a-4291-94b1-ac3ec33bf2c5",
+      "name": "Send a text message",
+      "webhookId": "ea3f2272-81dc-4bba-b8a8-96086151bb79",
+      "credentials": {
+        "telegramApi": {
+          "id": "jD1Dc62QHHmmszrj",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').item.json.message.chat.id }}",
+        "text": "={{ $json.message }}  Please try again with the correct format:  📋 EXAMPLES: • \"5kg=5, 10kg=10, 25kg=5, 50kg=3\" • \"Today sold 5 of 5kg and 10 of 10kg\" • \"Sold 23 sacks: 10 small, 8 medium, 5 large\"  💡 TIP: Make sure to include quantities for at least one sack size.  Need help? Reply with /help",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1360,
+        -96
+      ],
+      "id": "6acce18c-8ca3-4d18-8390-c6928e8b32ad",
+      "name": "Send a text message1",
+      "webhookId": "efc4aa86-b29f-4149-8030-d2933f50682c",
+      "credentials": {
+        "telegramApi": {
+          "id": "jD1Dc62QHHmmszrj",
+          "name": "Telegram account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Basic LLM Chain",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "Basic LLM Chain",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Basic LLM Chain": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Append row in sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append row in sheet": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Send a text message1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send a text message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "4dee118f-1c71-48e6-89c7-36cd94618829",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "aacca22524f16f411a47b940fc14b34c7fdd8267be2efe86a6049b0079822f91"
+  },
+  "id": "BX1sg0BYAestgrVF",
+  "tags": []
+}

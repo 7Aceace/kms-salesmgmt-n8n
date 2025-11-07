@@ -1,0 +1,15 @@
+# Sensitive data
+*.env
+.env.local
+credentials.json
+secrets/
+
+# Temporary files
+*.tmp
+*.log
+.DS_Store
+Thumbs.db
+
+# Editor files
+.vscode/
+.idea/
